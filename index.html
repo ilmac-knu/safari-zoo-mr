@@ -13,16 +13,16 @@ const $=id=>document.getElementById(id),canvas=$('scene'),backdrop=$('backdrop')
 const renderer=new THREE.WebGLRenderer({canvas,alpha:true,antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.outputColorSpace=THREE.SRGBColorSpace;
 const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(48,1,.05,100);camera.position.set(0,1.7,9);camera.lookAt(0,.9,0);scene.add(new THREE.HemisphereLight(0xe9f6ff,0x5c654a,2.4));const light=new THREE.DirectionalLight(0xffffff,2.2);light.position.set(-4,9,7);scene.add(light);
 const loader=new GLTFLoader();const defs={bear:{file:'bear',clip:'|run',size:1.45},rhino:{file:'rhino',clip:'Animation',size:1.55},sparrow:{file:'sparrow',clip:'Sparrow_Fly',size:.45},whale:{file:'sperm-whale',clip:'ArmatureAction',size:5.5},turtle:{file:'turtle',clip:'Swim Cycle',size:2.4},rabbit:{file:'rabbit',size:.55},whiteRhino:{file:'white-rhino',clip:'Action',size:1.4}};
-const templates={},mixers=[],actors=[];let mode='home',stream=null,clock=new THREE.Clock(),elapsed=0,dragX=0,dragY=0,interaction=false;
+const templates={},mixers=[],actors=[];let frameNo=0;let mode='home',stream=null,clock=new THREE.Clock(),elapsed=0,dragX=0,dragY=0,interaction=false;
 function setButtons(items){toolbar.innerHTML='';for(const [label,fn,active] of items){const b=document.createElement('button');b.textContent=label;b.className=active?'active':'';b.onclick=fn;toolbar.append(b)}}
 function note(t){$('message').textContent=t}function status(t){$('status').textContent=t}
 function bg(file,opacity=1){backdrop.style.backgroundImage=`url('images/${file}')`;backdrop.style.opacity=opacity}
 function audio(which){for(const n of ['forest','ocean']){const a=$(n+'Audio');a.pause();a.volume=.3;if(which===n){a.currentTime=0;a.play().catch(()=>status('소리를 들으려면 화면을 한 번 터치하세요.'))}}}
 function clearActors(){for(const a of actors){scene.remove(a.root);if(a.mixer){a.mixer.stopAllAction();const i=mixers.indexOf(a.mixer);if(i>=0)mixers.splice(i,1)}}actors.length=0}
 function add(name,x,y,z,scale=1,behavior='idle',delay=0){if(!templates[name])return;const source=templates[name];const object=cloneSkeleton(source.scene);const box=new THREE.Box3().setFromObject(object);const sz=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());object.position.sub(center);object.position.y+=sz.y/2;const group=new THREE.Group();group.add(object);group.scale.setScalar(defs[name].size/Math.max(sz.x,sz.y,sz.z)*scale);group.position.set(x,y,z);scene.add(group);
-let mixer=null;const clips=source.animations||[];if(clips.length){mixer=new THREE.AnimationMixer(object);const key=defs[name].clip||'';const clip=clips.find(c=>c.name.includes(key))||clips[0];mixer.clipAction(clip).play();mixers.push(mixer)}const a={name,root:group,mixer,behavior,delay,born:elapsed,base:{x,y,z},scale:group.scale.x};actors.push(a);return a}
+let mixer=null;const clips=source.animations||[];if(clips.length){mixer=new THREE.AnimationMixer(object);const key=defs[name].clip||'';const clip=clips.find(c=>c.name.includes(key))||clips[0];mixer.clipAction(clip).play();mixers.push(mixer)}const a={name,root:group,mixer,behavior,delay,born:elapsed,base:{x,y,z},scale:group.scale.x,fitPending:true};actors.push(a);return a}
 function home(){mode='home';clearActors();video.style.display='none';bg('safari-background.png',1);audio(null);camera.position.set(0,1.7,10);camera.lookAt(0,1,0);dragX=0;dragY=0;
-add('bear',-2.5,-.65,-2,.8);add('rhino',-.6,-.6,-2,.8);add('whiteRhino',2,-.65,-2,.8);add('rabbit',-1.5,-.85,0,.8);add('sparrow',-.2,1.7,-2,.8,'fly');add('whale',2.2,.2,-5,.65,'float');add('turtle',1,-.9,-1,.7,'float');$('subtitle').textContent='7마리 3D 동물을 만나보세요';note('화면을 드래그하여 동물을 둘러보세요');setButtons([['📷 카메라 켜기',startCamera,true]])}
+add('bear',-2.0,.65,-2,.6);add('rhino',0,.6,-2,.6);add('whiteRhino',2,.6,-2,.6);add('rabbit',-2,-.75,-1,.5);add('sparrow',0,1.95,-2,.5,'float');add('whale',1.8,-.6,-3,.5,'float');add('turtle',0,-.7,-1,.5,'float');$('subtitle').textContent='7마리 3D 동물을 만나보세요';note('화면을 드래그하여 동물을 둘러보세요');setButtons([['📷 카메라 켜기',startCamera,true]])}
 async function startCamera(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=stream;await video.play();video.style.display='block';mode='choose';clearActors();bg('safari-background.png',.18);$('subtitle').textContent='체험관을 선택하세요';note('카메라로 책상이나 바닥을 비춰 보세요');status('이 버전은 카메라 합성형 체험입니다. 실제 평면 인식·공간 고정은 지원하지 않습니다.');setButtons([['🌳 육지관',()=>enter('land')],['🌊 바다관',()=>enter('sea')],['처음으로',reset]])}catch(e){status('카메라 접근 실패: HTTPS 연결과 브라우저 권한을 확인하세요.');note('카메라 권한을 허용한 뒤 다시 눌러 주세요.')}}
 function reset(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}status('');home()}
 function enter(where){mode=where;clearActors();dragX=0;dragY=0;camera.position.set(0,1.7,9);camera.lookAt(0,.9,0);const land=where==='land';bg(land?'forest-background.png':'ocean-background.png',.42);audio(land?'forest':'ocean');$('subtitle').textContent=land?'🌳 육지관 — 숲과 초원':'🌊 바다관 — 해저 탐험';note(land?'동물을 선택하면 바닥에서 등장합니다':'고래와 거북이가 먼바다에서 다가옵니다');const b=land?[['🐻 곰',()=>show('bear')],['🐦 새',()=>show('sparrow')],['🦏 코뿔소',()=>show('rhino')],['모두',()=>show('all')],['🌊 바다관',()=>enter('sea')]]:[['🐋 고래',()=>show('whale')],['🐢 거북이',()=>show('turtle')],['모두',()=>show('all')],['🌳 육지관',()=>enter('land')]];setButtons(b)}
@@ -31,20 +31,45 @@ function show(which){
  // 세로형 스마트폰에서는 동물을 중앙에 더 모아 화면 밖으로 잘리지 않게 합니다.
  const portrait=innerWidth<innerHeight, side=portrait?.65:1.35;
  if(mode==='land'){
-  if(which==='bear'||which==='all')add('bear',which==='all'?-side:0,-1.1,-4.5,which==='all'?.82:1,'run',0);
-  if(which==='rhino'||which==='all')add('rhino',which==='all'?side:0,-1.1,-5.2,which==='all'?.82:1,'walk',which==='all'?1.1:0);
-  if(which==='sparrow'||which==='all')add('sparrow',which==='all'?0:0,.1,-4.2,which==='all'?.85:1,'fly',which==='all'?.5:0);
+  if(which==='bear'||which==='all')add('bear',which==='all'?-side:0,0,-4.5,which==='all'?.7:1,'run',0);
+  if(which==='rhino'||which==='all')add('rhino',which==='all'?side:0,0,-5.2,which==='all'?.7:1,'walk',which==='all'?1.1:0);
+  if(which==='sparrow'||which==='all')add('sparrow',0,1.1,-4.2,which==='all'?.65:1,'fly',which==='all'?.5:0);
  }else if(mode==='sea'){
-  if(which==='whale'||which==='all')add('whale',which==='all'?-side*.45:0,.2,-12,which==='all'?.85:1,'approach',0);
-  if(which==='turtle'||which==='all')add('turtle',which==='all'?side*.65:0,-.45,-12,which==='all'?.85:1,'approach',which==='all'?2:0);
+  if(which==='whale'||which==='all')add('whale',which==='all'?-side*.45:0,.2,-10,which==='all'?.7:1,'approach',0);
+  if(which==='turtle'||which==='all')add('turtle',which==='all'?side*.65:0,-.2,-10,which==='all'?.7:1,'approach',which==='all'?2:0);
  }
  note(which==='all'?'동물들이 각자 움직이고 있습니다':'동물이 등장하고 있습니다');
 }
+// GLB 원본의 축/스케일/애니메이션 크기가 달라도 화면 안에 들어오도록 자동 보정.
+// 3D 모델을 실제로 렌더링한 후 월드 경계 상자를 측정하여 크기와 중심을 보정합니다.
+function fitActor(a){
+ const box=new THREE.Box3().setFromObject(a.root,true);
+ if(box.isEmpty())return;
+ const size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
+ if(!Number.isFinite(size.x+size.y+size.z)||Math.max(size.x,size.y,size.z)<1e-7)return;
+ const dist=Math.max(1,camera.position.z-a.root.position.z);
+ const viewH=2*dist*Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+ const viewW=viewH*camera.aspect;
+ const homeMode=mode==='home', multi=homeMode||actors.length>1;
+ const maxW=viewW*(homeMode?.18:multi?.29:.63);
+ const maxH=viewH*(homeMode?.17:multi?.29:.48);
+ const factor=Math.min(1,maxW/Math.max(size.x,.001),maxH/Math.max(size.y,.001));
+ if(factor<.999){a.root.scale.multiplyScalar(Math.max(.005,factor));a.root.updateMatrixWorld(true)}
+ const revised=new THREE.Box3().setFromObject(a.root,true),mid=revised.getCenter(new THREE.Vector3());
+ // 동물의 시각적 중심을 정해 둔 등장 위치에 맞춥니다.
+ const target=new THREE.Vector3(a.base.x,a.base.y,a.root.position.z);
+ a.root.children[0].position.x+=(target.x-mid.x)/a.root.scale.x;
+ a.root.children[0].position.y+=(target.y-mid.y)/a.root.scale.y;
+ a.root.updateMatrixWorld(true);
+ // 바다 동물은 측면이 보이도록 회전시킵니다.
+ if(a.name==='whale'||a.name==='turtle')a.root.rotation.y=-Math.PI/3;
+ a.fitPending=false;
+}
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 let down=null;canvas.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY};interaction=true});canvas.addEventListener('pointermove',e=>{if(!down)return;dragX+=(e.clientX-down.x)*.003;dragY+=(e.clientY-down.y)*.0015;dragY=THREE.MathUtils.clamp(dragY,-.3,.3);down={x:e.clientX,y:e.clientY}});addEventListener('pointerup',()=>down=null);
-function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const m of mixers)m.update(dt);for(const a of actors){let t=elapsed-a.born-a.delay;a.root.visible=t>=0;if(t<0)continue;const k=Math.min(t/1.35,1);if(a.behavior==='run'||a.behavior==='walk'){a.root.position.y=a.base.y+Math.min(1,k)*.65;a.root.position.z=a.base.z+Math.min(t,7)*(a.behavior==='run'?.23:.12);if(t>9){a.born=elapsed;a.root.position.z=a.base.z}}
-else if(a.behavior==='fly'){a.root.position.y=a.base.y+Math.min(t,5)*.45;a.root.position.x=a.base.x+Math.sin(t*.7)*1.5;a.root.rotation.y=Math.sin(t*.6)*.3}
-else if(a.behavior==='approach'){a.root.position.z=Math.min(a.base.z+Math.min(t,18)*(a.name==='whale'?.72:.62),2.0);a.root.position.y=a.base.y+Math.sin(t*.6)*.13;a.root.position.x=a.base.x+Math.sin(t*.25)*.35;if(t>21){a.born=elapsed;a.root.position.z=a.base.z}}
+function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const m of mixers)m.update(dt);if(++frameNo%12===0){for(const a of actors)if(a.fitPending)fitActor(a)}for(const a of actors){let t=elapsed-a.born-a.delay;a.root.visible=t>=0;if(t<0)continue;const k=Math.min(t/1.35,1);if(a.behavior==='run'||a.behavior==='walk'){a.root.position.y=a.base.y+Math.min(1,k)*.12;a.root.position.z=a.base.z+Math.min(t,7)*(a.behavior==='run'?.16:.09);if(t>9){a.born=elapsed;a.root.position.z=a.base.z}}
+else if(a.behavior==='fly'){a.root.position.y=a.base.y+Math.min(t,5)*.12;a.root.position.x=a.base.x+Math.sin(t*.7)*.35;a.root.rotation.y=Math.sin(t*.6)*.3}
+else if(a.behavior==='approach'){a.root.position.z=Math.min(a.base.z+Math.min(t,18)*(a.name==='whale'?.38:.30),-2.0);a.root.position.y=a.base.y+Math.sin(t*.6)*.13;a.root.position.x=a.base.x+Math.sin(t*.25)*.35;if(t>21){a.born=elapsed;a.root.position.z=a.base.z}}
 else if(a.behavior==='float'){a.root.position.y=a.base.y+Math.sin(t)*.08}}
 if(interaction){camera.rotation.y=THREE.MathUtils.clamp(dragX,-.45,.45);camera.rotation.x=dragY}else{camera.rotation.y=0;camera.rotation.x=0}renderer.render(scene,camera)}
 
