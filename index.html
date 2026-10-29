@@ -53,10 +53,12 @@ function home(){
  const wr=place('whiteRhino',.58,.55,.13,{heading:sideHeading('whiteRhino')});
  const bird=place('sparrow',.53,.38,.085,{behavior:'homeBird',heading:sideHeading('sparrow')});
  const whale=place('whale',.84,.56,.24,{behavior:'homeWhale',heading:sideHeading('whale')});
- const turtle=place('turtle',.72,.865,.15,{behavior:'homeTurtle',heading:sideHeading('turtle')});
+ const turtle=place('turtle',.72,.865,.065,{behavior:'homeTurtle',heading:sideHeading('turtle')});
  const rabbit=place('rabbit',.29,.735,.16,{heading:sideHeading('rabbit')});
  // 배치된 모델의 정상적인 형태를 우선 확보합니다. 이동은 아래 animate()에서 처리합니다.
- for(const a of [b,r,wr,bird,whale,turtle,rabbit])if(a?.mixer){a.mixer.stopAllAction();a.mixer=null;}
+ for(const a of [wr,rabbit])if(a?.mixer){a.mixer.stopAllAction();a.mixer=null;}
+ // 나머지 5종은 GLB 원본 애니메이션을 1배속으로 재생합니다.
+ for(const a of [b,r,bird,whale,turtle])if(a?.mixer)a.mixer.timeScale=1;
  // 고래는 정면이 아닌 옆모습, 거북이는 등껍질과 머리가 함께 보이도록 기울입니다.
  if(whale)whale.pivot.rotation.y=sideHeading('whale');
  if(turtle){turtle.pivot.rotation.y=sideHeading('turtle')+.3;turtle.pivot.rotation.x=-.18;}
@@ -77,44 +79,20 @@ function show(name){clear();const multiple=name==='all';const spread=innerWidth<
  }msg(multiple?'동물들이 각자 움직이고 있습니다':'동물이 등장하고 있습니다')}
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 $('scene').addEventListener('pointerdown',e=>{dragStart=e.clientX});$('scene').addEventListener('pointermove',e=>{if(dragStart===null)return;drag+=(e.clientX-dragStart)*.002;dragStart=e.clientX});addEventListener('pointerup',()=>dragStart=null);
-function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const a of actors){if(a.mixer){a.mixer.update(dt);a.model.updateMatrixWorld(true);
- const actual=new THREE.Box3().setFromObject(a.model).getSize(new THREE.Vector3());
- if(Math.max(actual.x,actual.y,actual.z)>a.maxDim*3.5){a.mixer.stopAllAction();a.mixer=null;}}
+function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const a of actors){if(a.mixer){a.mixer.update(dt);}
  const t=elapsed-a.born-a.delay;a.group.visible=t>=0;if(t<0)continue;const {x,y,z}=a.origin;
  switch(a.behavior){
- case 'homeBear':{const k=(t%12)/12;a.group.position.set(x+.12*k,y-.10*k,z);a.group.scale.setScalar(.62+.52*k);break}
- case 'homeRhino':{const k=(t%15)/15;a.group.position.set(x+.06*k,y-.08*k,z);a.group.scale.setScalar(.72+.34*k);break}
- case 'homeBird':{const k=(t%14)/14;a.group.position.set(x+Math.sin(t*.5)*.10,y+Math.sin(t*1.2)*.05,z);a.group.scale.setScalar(.65+.45*k);break}
+ case 'homeBear':{const k=(1-Math.cos(t*Math.PI/12))/2;a.group.position.set(x+.12*k,y-.10*k,z);a.group.scale.setScalar(.62+.52*k);break}
+ case 'homeRhino':{const k=(1-Math.cos(t*Math.PI/15))/2;a.group.position.set(x+.06*k,y-.08*k,z);a.group.scale.setScalar(.72+.34*k);break}
+ case 'homeBird':{const k=(1-Math.cos(t*Math.PI/14))/2;a.group.position.set(x+Math.sin(t*.5)*.10,y+Math.sin(t*1.2)*.05,z);a.group.scale.setScalar(.65+.45*k);break}
  case 'homeWhale':a.group.position.y=y+Math.sin(t*.55)*.035;break;
  case 'homeTurtle':a.group.position.x=x+Math.sin(t*.45)*.15; a.group.position.y=y+Math.sin(t*.6)*.025;break;
  case 'run':case 'walk':{const speed=a.behavior==='run'?.08:.055;a.group.position.z=z+Math.min(t,7)*speed;a.group.position.y=y+Math.sin(t*3)*.035;if(t>9)a.born=elapsed;break}
  case 'fly':a.group.position.set(x+Math.sin(t*.8)*.22,y+Math.min(t,5)*.035,z);break;
  case 'approach':a.group.position.z=z+Math.min(t,13)*.06;a.group.position.y=y+Math.sin(t*.5)*.08;if(t>17)a.born=elapsed;break;
  }}
- // Sketchfab 모델은 루트 좌표와 실제 메시 위치가 크게 다를 수 있습니다.
- // 현재 프레임의 실제 메시 경계상자를 기준으로 크기와 중심을 보정합니다.
- for(const a of actors){
-   if(!a.group.visible)continue;
-   a.model.updateMatrixWorld(true);
-   const box=new THREE.Box3().setFromObject(a.model,true);
-   if(box.isEmpty())continue;
-   const dimensions=box.getSize(new THREE.Vector3());
-   const actualMax=Math.max(dimensions.x,dimensions.y,dimensions.z);
-   if(!Number.isFinite(actualMax)||actualMax<1e-8)continue;
-   // 정규화한 크기를 기준으로 강제 제한: 큰 발/몸통이 화면을 덮는 현상 방지
-   const desired=a.desiredSize;
-   const targetScale=desired/actualMax;
-   const old=a.pivot.scale.x;
-   const newScale=THREE.MathUtils.clamp(targetScale,old*.2,old*5);
-   a.pivot.scale.setScalar(newScale);
-   a.model.updateMatrixWorld(true);
-   const center=new THREE.Box3().setFromObject(a.model,true).getCenter(new THREE.Vector3());
-   // 모델이 그룹 목표 좌표에서 얼마나 벗어났는지 실제 세계 좌표로 계산
-   const offset=center.sub(a.group.position);
-   if(offset.length()>0.001){
-     a.centering.position.sub(offset.clone().applyQuaternion(a.pivot.quaternion.clone().invert()).divideScalar(Math.max(newScale,1e-8)));
-   }
- }
+ // 모델 중심/크기는 최초 로딩 때만 계산합니다. 매 프레임 재계산하면
+ // 뼈대 움직임에 따라 모델이 확대·축소되어 깜빡이는 현상이 발생합니다.
  camera.rotation.y=THREE.MathUtils.clamp(drag,-.35,.35);renderer.render(scene,camera)}
 let loaded=0;await Promise.all(Object.entries(specs).map(async([name,[file]])=>{try{assets[name]=await loader.loadAsync('models/'+file+'.glb')}catch(e){console.error('GLB load failed',name,e);status(name+' 모델을 불러오지 못했습니다.')}finally{$('progress').textContent=`GLB ${++loaded} / 7 불러오는 중…`}}));$('loading').hidden=true;home();animate();
 </script></body></html>
