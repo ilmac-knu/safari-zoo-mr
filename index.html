@@ -8,9 +8,9 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.m
 import {GLTFLoader} from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/loaders/GLTFLoader.js';
 import {clone as cloneSkeleton} from 'https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/utils/SkeletonUtils.js';
 const $=id=>document.getElementById(id), video=$('camera'), backdrop=$('backdrop'), toolbar=$('toolbar');
-const renderer=new THREE.WebGLRenderer({canvas:$('scene'),alpha:true,antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.1;
+const renderer=new THREE.WebGLRenderer({canvas:$('scene'),alpha:true,antialias:true,powerPreference:'high-performance'});renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.NoToneMapping;renderer.toneMappingExposure=1;
 const scene=new THREE.Scene(), camera=new THREE.PerspectiveCamera(46,1,.1,120);camera.position.set(0,0,12);camera.lookAt(0,0,0);
-scene.add(new THREE.HemisphereLight(0xffffff,0xb5ad98,2.0));const sun=new THREE.DirectionalLight(0xffffff,2.2);sun.position.set(-3,8,10);scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xffffff,0xffffff,2.8));const sun=new THREE.DirectionalLight(0xffffff,1.5);sun.position.set(-3,8,10);scene.add(sun);
 const loader=new GLTFLoader();loader.setCrossOrigin('anonymous');
 // Sketchfab 구형 GLB의 KHR_materials_pbrSpecularGlossiness 확장을 지원하여 원본 diffuseTexture를 보존합니다.
 // Three.js 기본 로더는 이 확장을 무시할 수 있어 동물이 회색으로 나타납니다.
@@ -26,48 +26,69 @@ function add(name,{x=0,y=0,z=-2,size=1,heading=0,behavior='idle',delay=0,phase=0
  const src=assets[name];if(!src)return;
  const model=cloneSkeleton(src.scene);model.updateMatrixWorld(true);const box=new THREE.Box3().setFromObject(model);if(box.isEmpty())return;
  const dim=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());const max=Math.max(dim.x,dim.y,dim.z,1e-5);
- const pivot=new THREE.Group();model.position.sub(center);pivot.add(model);pivot.scale.setScalar(size/max);
+ const pivot=new THREE.Group();const centering=new THREE.Group();centering.position.copy(center).multiplyScalar(-1);centering.add(model);pivot.add(centering);pivot.scale.setScalar(size/max);
  const group=new THREE.Group();group.add(pivot);group.position.set(x,y,z);pivot.rotation.y=heading;scene.add(group);
  let mixer=null;const clips=src.animations||[];if(clips.length){mixer=new THREE.AnimationMixer(model);const clip=clips.find(c=>c.name.toLowerCase().includes(specs[name][1].toLowerCase()))||clips[0];mixer.clipAction(clip).play()}
- const a={name,group,pivot,mixer,behavior,delay,born:elapsed,origin:{x,y,z},phase};actors.push(a);return a;
+ const a={name,group,pivot,centering,model,mixer,behavior,delay,born:elapsed,origin:{x,y,z},phase,baseSize:size,baseCenter:center.clone(),maxDim:max};actors.push(a);return a;
 }
 // 정면에서 측면이 보이도록 모델 방향을 결정: 모델의 장축이 X이면 Y축 회전 0,
 // Z이면 90도 회전. 3D 원본마다 좌표계가 달라 최초 크기 계산 후 설정합니다.
 function sideHeading(name){const s=assets[name];if(!s)return 0;const box=new THREE.Box3().setFromObject(s.scene);const d=box.getSize(new THREE.Vector3());return d.z>d.x?Math.PI/2:0}
+// 화면 좌표 기준 배치: x,y는 0~1 (왼쪽→오른쪽, 위→아래). 화면 크기가 달라도 동일한 풍경 위치를 유지합니다.
+function place(name,px,py,pixelHeight,options={}){
+ const visibleH=2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*12;
+ const worldH=visibleH*pixelHeight;
+ const worldW=visibleH*camera.aspect;
+ return add(name,{x:(px-.5)*worldW,y:(.5-py)*visibleH,z:0,size:worldH, ...options});
+}
 function home(){mode='home';clear();sound(null);video.style.display='none';background('safari-background.png',1);camera.position.set(0,0,12);camera.rotation.set(0,0,0);drag=0;status('');$('subtitle').textContent='7마리 3D 동물을 만나보세요';
- // 이미지의 초원/호수/바위에 대응하는 상대 좌표. 7마리 모두 독립적으로 배치합니다.
- add('bear',{x:-2.65,y:-.25,z:-2.5,size:1.05,behavior:'homeBear',heading:sideHeading('bear')-.25});
- add('rhino',{x:-.95,y:-.75,z:-2.5,size:1.28,behavior:'homeRhino',heading:sideHeading('rhino')-.4});
- add('whiteRhino',{x:2.05,y:-.85,z:-3,size:.95,heading:sideHeading('whiteRhino')-.3});
- add('sparrow',{x:.05,y:1.35,z:-3,size:.72,behavior:'homeBird',heading:0});
- add('whale',{x:2.7,y:-1.35,z:-3,size:2.05,behavior:'homeWhale',heading:sideHeading('whale')});
- add('turtle',{x:1.1,y:-2.1,z:-2,size:.76,behavior:'homeTurtle',heading:sideHeading('turtle')});
- add('rabbit',{x:-3.25,y:-1.95,z:-2,size:.55,heading:0});
- msg('화면을 드래그하여 둘러보세요');buttons([['📷 카메라 켜기',startCamera,true]]);
+ // 모델은 화면 높이의 5~18% 정도만 차지하도록 배치합니다. 움직임도 제자리 중심을 유지합니다.
+ place('bear',.29,.43,.17,{behavior:'homeBear',heading:sideHeading('bear')-.65});
+ place('rhino',.43,.57,.17,{behavior:'homeRhino',heading:sideHeading('rhino')+.35});
+ place('whiteRhino',.58,.55,.13,{heading:sideHeading('whiteRhino')-.35});
+ place('sparrow',.51,.34,.105,{behavior:'homeBird',heading:sideHeading('sparrow')+.15});
+ place('whale',.81,.56,.21,{behavior:'homeWhale',heading:sideHeading('whale')});
+ place('turtle',.65,.80,.11,{behavior:'homeTurtle',heading:sideHeading('turtle')});
+ place('rabbit',.29,.75,.085,{heading:sideHeading('rabbit')});
+ msg('화면을 드래그하여 동물을 둘러보세요');buttons([['📷 카메라 켜기',startCamera,true]]);
 }
 async function startCamera(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=stream;await video.play();video.style.display='block';mode='choose';clear();background('safari-background.png',.25);$('subtitle').textContent='체험관을 선택하세요';status('카메라 합성형 체험: 실제 바닥 인식이나 공간 고정 기능은 제공하지 않습니다.');msg('책상이나 바닥을 비추고 체험관을 선택하세요');buttons([['🌳 육지관',()=>enter('land')],['🌊 바다관',()=>enter('sea')],['처음으로',reset]])}catch(e){status('카메라 접근 실패: 브라우저 권한을 확인해 주세요.')}}
 function reset(){stream?.getTracks().forEach(t=>t.stop());stream=null;home()}
 function enter(which){mode=which;clear();drag=0;camera.rotation.set(0,0,0);camera.position.set(0,0,12);let land=which==='land';background(land?'forest-background.png':'ocean-background.png',.42);sound(land?'forest':'ocean');$('subtitle').textContent=land?'🌳 육지관 — 숲과 초원':'🌊 바다관 — 해저 탐험';msg(land?'동물을 선택해 주세요':'멀리서 동물이 다가옵니다');buttons(land?[['🐻 곰',()=>show('bear')],['🐦 새',()=>show('sparrow')],['🦏 코뿔소',()=>show('rhino')],['모두',()=>show('all')],['🌊 바다관',()=>enter('sea')]]:[['🐋 고래',()=>show('whale')],['🐢 거북이',()=>show('turtle')],['모두',()=>show('all')],['🌳 육지관',()=>enter('land')]])}
 function show(name){clear();const multiple=name==='all';const spread=innerWidth<innerHeight?.75:1.5;if(mode==='land'){
- if(name==='bear'||multiple)add('bear',{x:multiple?-spread:0,y:-.7,z:-2,size:multiple?1.2:1.65,behavior:'run',heading:sideHeading('bear')-.3});
- if(name==='rhino'||multiple)add('rhino',{x:multiple?spread:0,y:-.8,z:-2,size:multiple?1.2:1.7,behavior:'walk',heading:sideHeading('rhino')-.3,delay:multiple?.6:0});
- if(name==='sparrow'||multiple)add('sparrow',{x:0,y:multiple?.8:0,z:-2,size:multiple?.65:.95,behavior:'fly',delay:multiple?1:0});
+ if(name==='bear'||multiple)place('bear',multiple?.28:.5,.60,multiple?.20:.29,{behavior:'run',heading:sideHeading('bear')-.4});
+ if(name==='rhino'||multiple)place('rhino',multiple?.72:.5,.61,multiple?.20:.29,{behavior:'walk',heading:sideHeading('rhino')-.4,delay:multiple?.6:0});
+ if(name==='sparrow'||multiple)place('sparrow',.5,multiple?.37:.49,multiple?.15:.23,{behavior:'fly',heading:sideHeading('sparrow'),delay:multiple?1:0});
  }else{
- if(name==='whale'||multiple)add('whale',{x:multiple?-.55:0,y:.1,z:-4,size:multiple?2.0:2.8,heading:sideHeading('whale'),behavior:'approach',delay:0});
- if(name==='turtle'||multiple)add('turtle',{x:multiple?.65:0,y:-.6,z:-4,size:multiple?1.05:1.55,heading:sideHeading('turtle'),behavior:'approach',delay:multiple?2:0});
+ if(name==='whale'||multiple)place('whale',multiple?.43:.5,.49,multiple?.21:.33,{heading:sideHeading('whale'),behavior:'approach',delay:0});
+ if(name==='turtle'||multiple)place('turtle',multiple?.67:.5,.68,multiple?.14:.26,{heading:sideHeading('turtle'),behavior:'approach',delay:multiple?2:0});
  }msg(multiple?'동물들이 각자 움직이고 있습니다':'동물이 등장하고 있습니다')}
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 $('scene').addEventListener('pointerdown',e=>{dragStart=e.clientX});$('scene').addEventListener('pointermove',e=>{if(dragStart===null)return;drag+=(e.clientX-dragStart)*.002;dragStart=e.clientX});addEventListener('pointerup',()=>dragStart=null);
 function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const a of actors){a.mixer?.update(dt);const t=elapsed-a.born-a.delay;a.group.visible=t>=0;if(t<0)continue;const {x,y,z}=a.origin;
  switch(a.behavior){
- case 'homeBear':a.group.position.x=x+Math.sin(t*.32)*.28;break;
- case 'homeRhino':a.group.position.x=x+Math.sin(t*.24)*.2;break;
- case 'homeBird':a.group.position.set(x+Math.sin(t*.7)*.7,y+Math.sin(t*1.3)*.13,z);break;
+ case 'homeBear':a.group.position.x=x+Math.sin(t*.32)*.14;break;
+ case 'homeRhino':a.group.position.x=x+Math.sin(t*.24)*.10;break;
+ case 'homeBird':a.group.position.set(x+Math.sin(t*.7)*.22,y+Math.sin(t*1.3)*.13,z);break;
  case 'homeWhale':a.group.position.y=y+Math.sin(t*.55)*.055;break;
- case 'homeTurtle':a.group.position.x=x+Math.sin(t*.45)*.23;break;
- case 'run':case 'walk':{const speed=a.behavior==='run'?.25:.13;a.group.position.z=z+Math.min(t,7)*speed;a.group.position.y=y+Math.sin(t*3)*.035;if(t>9)a.born=elapsed;break}
- case 'fly':a.group.position.set(x+Math.sin(t*.8)*.55,y+Math.min(t,5)*.12,z);break;
- case 'approach':a.group.position.z=z+Math.min(t,13)*.16;a.group.position.y=y+Math.sin(t*.5)*.08;if(t>17)a.born=elapsed;break;
- }}camera.rotation.y=THREE.MathUtils.clamp(drag,-.35,.35);renderer.render(scene,camera)}
+ case 'homeTurtle':a.group.position.x=x+Math.sin(t*.45)*.10;break;
+ case 'run':case 'walk':{const speed=a.behavior==='run'?.08:.055;a.group.position.z=z+Math.min(t,7)*speed;a.group.position.y=y+Math.sin(t*3)*.035;if(t>9)a.born=elapsed;break}
+ case 'fly':a.group.position.set(x+Math.sin(t*.8)*.22,y+Math.min(t,5)*.035,z);break;
+ case 'approach':a.group.position.z=z+Math.min(t,13)*.06;a.group.position.y=y+Math.sin(t*.5)*.08;if(t>17)a.born=elapsed;break;
+ }}
+ // 애니메이션이 GLB 루트의 위치/크기를 바꾸더라도 매 프레임 화면 밖으로 튀어나가지 않도록 보정.
+ // 먼저 실제 모델의 경계 상자를 월드 좌표로 측정합니다.
+ scene.updateMatrixWorld(true);
+ for(const a of actors){if(!a.group.visible)continue;
+  const b=new THREE.Box3().setFromObject(a.model);if(b.isEmpty())continue;
+  const c=b.getCenter(new THREE.Vector3()), d=b.getSize(new THREE.Vector3());
+  if(!Number.isFinite(d.x+d.y+d.z))continue;
+  // 보정용 centering 그룹을 이동해 애니메이션 루트 이동도 상쇄합니다.
+  const target=a.group.position.clone();const offset=c.sub(target);
+  // 초기 중심 정렬은 유지하며 애니메이션 루트 이동에 의한 화면 이탈만 제한합니다.
+  const span=Math.max(d.x,d.y,d.z);
+  if(span>a.baseSize*1.35) a.pivot.scale.multiplyScalar(a.baseSize*1.15/span);
+ }
+ camera.rotation.y=THREE.MathUtils.clamp(drag,-.35,.35);renderer.render(scene,camera)}
 let loaded=0;await Promise.all(Object.entries(specs).map(async([name,[file]])=>{try{assets[name]=await loader.loadAsync('models/'+file+'.glb')}catch(e){console.error('GLB load failed',name,e);status(name+' 모델을 불러오지 못했습니다.')}finally{$('progress').textContent=`GLB ${++loaded} / 7 불러오는 중…`}}));$('loading').hidden=true;home();animate();
 </script></body></html>
