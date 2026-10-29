@@ -41,15 +41,26 @@ function place(name,px,py,pixelHeight,options={}){
  const worldW=visibleH*camera.aspect;
  return add(name,{x:(px-.5)*worldW,y:(.5-py)*visibleH,z:0,size:worldH, ...options});
 }
-function home(){mode='home';clear();sound(null);video.style.display='none';background('safari-background.png',1);camera.position.set(0,0,12);camera.rotation.set(0,0,0);drag=0;status('');$('subtitle').textContent='7마리 3D 동물을 만나보세요';
- // 배경 사진의 위치를 기준으로 각각 배치. 숫자는 (가로 비율, 세로 비율, 화면 높이 대비 크기).
- place('bear',.275,.445,.115,{behavior:'homeBear',heading:sideHeading('bear')-.65});
- place('rhino',.415,.605,.16,{behavior:'homeRhino',heading:sideHeading('rhino')+.35});
- place('whiteRhino',.58,.55,.105,{heading:sideHeading('whiteRhino')-.35});
- place('sparrow',.53,.37,.085,{behavior:'homeBird',heading:sideHeading('sparrow')+.15});
- place('whale',.845,.56,.20,{behavior:'homeWhale',heading:sideHeading('whale')});
- place('turtle',.72,.86,.14,{behavior:'homeTurtle',heading:sideHeading('turtle')});
- place('rabbit',.295,.73,.12,{heading:sideHeading('rabbit')});
+// 첫 화면은 3D 모델을 화면 속 특정 좌표에 배치합니다. 카메라 깊이는 일정하게 유지합니다.
+// 원본 GLB의 스켈레톤 애니메이션이 일부 기종에서 거대한 발/몸통을 만드는 경우를 피하기 위해
+// 첫 화면에서는 모델 자체의 애니메이션을 끄고 화면 내 이동 애니메이션을 적용합니다.
+function home(){
+ mode='home';clear();sound(null);video.style.display='none';background('safari-background.png',1);
+ camera.position.set(0,0,12);camera.rotation.set(0,0,0);drag=0;status('');
+ $('subtitle').textContent='7마리 3D 동물을 만나보세요';
+ const b=place('bear',.275,.445,.125,{behavior:'homeBear',heading:sideHeading('bear')-.45});
+ const r=place('rhino',.405,.585,.15,{behavior:'homeRhino',heading:sideHeading('rhino')+.35});
+ const wr=place('whiteRhino',.58,.55,.13,{heading:sideHeading('whiteRhino')});
+ const bird=place('sparrow',.53,.38,.085,{behavior:'homeBird',heading:sideHeading('sparrow')});
+ const whale=place('whale',.84,.56,.24,{behavior:'homeWhale',heading:sideHeading('whale')});
+ const turtle=place('turtle',.72,.865,.15,{behavior:'homeTurtle',heading:sideHeading('turtle')});
+ const rabbit=place('rabbit',.29,.735,.16,{heading:sideHeading('rabbit')});
+ // 배치된 모델의 정상적인 형태를 우선 확보합니다. 이동은 아래 animate()에서 처리합니다.
+ for(const a of [b,r,wr,bird,whale,turtle,rabbit])if(a?.mixer){a.mixer.stopAllAction();a.mixer=null;}
+ // 고래는 정면이 아닌 옆모습, 거북이는 등껍질과 머리가 함께 보이도록 기울입니다.
+ if(whale)whale.pivot.rotation.y=sideHeading('whale');
+ if(turtle){turtle.pivot.rotation.y=sideHeading('turtle')+.3;turtle.pivot.rotation.x=-.18;}
+ if(bird)bird.pivot.rotation.x=-.12;
  msg('화면을 드래그하여 동물을 둘러보세요');buttons([['📷 카메라 켜기',startCamera,true]]);
 }
 async function startCamera(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=stream;await video.play();video.style.display='block';mode='choose';clear();background('safari-background.png',.25);$('subtitle').textContent='체험관을 선택하세요';status('카메라 합성형 체험: 실제 바닥 인식이나 공간 고정 기능은 제공하지 않습니다.');msg('책상이나 바닥을 비추고 체험관을 선택하세요');buttons([['🌳 육지관',()=>enter('land')],['🌊 바다관',()=>enter('sea')],['처음으로',reset]])}catch(e){status('카메라 접근 실패: 브라우저 권한을 확인해 주세요.')}}
@@ -65,13 +76,16 @@ function show(name){clear();const multiple=name==='all';const spread=innerWidth<
  }msg(multiple?'동물들이 각자 움직이고 있습니다':'동물이 등장하고 있습니다')}
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 $('scene').addEventListener('pointerdown',e=>{dragStart=e.clientX});$('scene').addEventListener('pointermove',e=>{if(dragStart===null)return;drag+=(e.clientX-dragStart)*.002;dragStart=e.clientX});addEventListener('pointerup',()=>dragStart=null);
-function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const a of actors){a.mixer?.update(dt);const t=elapsed-a.born-a.delay;a.group.visible=t>=0;if(t<0)continue;const {x,y,z}=a.origin;
+function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const a of actors){if(a.mixer){a.mixer.update(dt);a.model.updateMatrixWorld(true);
+ const actual=new THREE.Box3().setFromObject(a.model).getSize(new THREE.Vector3());
+ if(Math.max(actual.x,actual.y,actual.z)>a.maxDim*3.5){a.mixer.stopAllAction();a.mixer=null;}}
+ const t=elapsed-a.born-a.delay;a.group.visible=t>=0;if(t<0)continue;const {x,y,z}=a.origin;
  switch(a.behavior){
- case 'homeBear':{const k=Math.min(t/9,1);a.group.position.set(x+.28*k,y-.10*k,z+1.3*k);a.group.scale.setScalar(.68+.52*k);break}
- case 'homeRhino':{const k=Math.min(t/13,1);a.group.position.set(x+.10*k,y-.03*k,z+.55*k);break}
- case 'homeBird':{const k=(t%14)/14;a.group.position.set(x+Math.sin(t*.5)*.13,y+Math.sin(t*1.2)*.07,z+1.2*k);a.group.scale.setScalar(.65+.6*k);break}
- case 'homeWhale':a.group.position.y=y+Math.sin(t*.55)*.055;break;
- case 'homeTurtle':a.group.position.x=x+Math.sin(t*.45)*.11;break;
+ case 'homeBear':{const k=(t%12)/12;a.group.position.set(x+.12*k,y-.10*k,z);a.group.scale.setScalar(.62+.52*k);break}
+ case 'homeRhino':{const k=(t%15)/15;a.group.position.set(x+.06*k,y-.08*k,z);a.group.scale.setScalar(.72+.34*k);break}
+ case 'homeBird':{const k=(t%14)/14;a.group.position.set(x+Math.sin(t*.5)*.10,y+Math.sin(t*1.2)*.05,z);a.group.scale.setScalar(.65+.45*k);break}
+ case 'homeWhale':a.group.position.y=y+Math.sin(t*.55)*.035;break;
+ case 'homeTurtle':a.group.position.x=x+Math.sin(t*.45)*.15; a.group.position.y=y+Math.sin(t*.6)*.025;break;
  case 'run':case 'walk':{const speed=a.behavior==='run'?.08:.055;a.group.position.z=z+Math.min(t,7)*speed;a.group.position.y=y+Math.sin(t*3)*.035;if(t>9)a.born=elapsed;break}
  case 'fly':a.group.position.set(x+Math.sin(t*.8)*.22,y+Math.min(t,5)*.035,z);break;
  case 'approach':a.group.position.z=z+Math.min(t,13)*.06;a.group.position.y=y+Math.sin(t*.5)*.08;if(t>17)a.born=elapsed;break;
