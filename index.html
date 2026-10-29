@@ -52,7 +52,7 @@ function home(){
  const r=place('rhino',.405,.585,.15*2,{behavior:'homeRhino',heading:sideHeading('rhino')+.35});
  const wr=place('whiteRhino',.58,.55,.13,{heading:sideHeading('whiteRhino')});
  const bird=place('sparrow',.53,.38,.085*2,{behavior:'homeBird',heading:sideHeading('sparrow')+Math.PI});
- const whale=place('whale',.84,.56,.24*1.5,{behavior:'homeWhale',heading:sideHeading('whale')});
+ const whale=place('whale',.85,.515,.24*1.5,{behavior:'homeWhale',heading:sideHeading('whale')});
  const turtle=place('turtle',.72,.865,.065*1.5*2.5,{behavior:'homeTurtle',heading:sideHeading('turtle')});
  const rabbit=place('rabbit',.29,.735,.16,{heading:sideHeading('rabbit')});
  // 배치된 모델의 정상적인 형태를 우선 확보합니다. 이동은 아래 animate()에서 처리합니다.
@@ -74,23 +74,41 @@ function enter(which){mode=which;clear();drag=0;camera.rotation.set(0,0,0);camer
 function show(name){clear();const multiple=name==='all';const spread=innerWidth<innerHeight?.75:1.5;if(mode==='land'){
  if(name==='bear'||multiple)place('bear',multiple?.28:.5,.60,multiple?.20:.29,{behavior:'run',heading:sideHeading('bear')-.4});
  if(name==='rhino'||multiple)place('rhino',multiple?.72:.5,.61,multiple?.20:.29,{behavior:'walk',heading:sideHeading('rhino')-.4,delay:multiple?.6:0});
- if(name==='sparrow'||multiple){const bird=place('sparrow',.5,multiple?.37:.49,multiple?.15:.23,{behavior:'fly',heading:sideHeading('sparrow')+Math.PI,delay:multiple?1:0});if(bird){bird.initialRoll=Math.PI;bird.initialPitch=0;}}
+ if(name==='sparrow'||multiple){const bird=place('sparrow',.5,multiple?.37:.49,multiple?.15:.23,{behavior:'fly',heading:sideHeading('sparrow')+Math.PI,delay:multiple?1:0});if(bird){bird.initialRoll=0;bird.initialPitch=0;}}
  }else{
  if(name==='whale'||multiple){const whale=place('whale',multiple?.43:.5,.49,multiple?.21:.33,{heading:sideHeading('whale')+Math.PI/4,behavior:'approach',delay:0});if(whale?.mixer)whale.mixer.timeScale=12.5;}
- if(name==='turtle'||multiple){const turtle=place('turtle',multiple?.67:.5,.68,multiple?.14:.26,{heading:sideHeading('turtle')+Math.PI,behavior:'approach',delay:multiple?2:0});if(turtle){turtle.initialRoll=Math.PI;turtle.initialPitch=0;}}
+ if(name==='turtle'||multiple){const turtle=place('turtle',multiple?.67:.5,.68,multiple?.14:.26,{heading:sideHeading('turtle')+Math.PI,behavior:'approach',delay:multiple?2:0});if(turtle){turtle.initialRoll=0;turtle.initialPitch=0;}}
  }msg(multiple?'동물들이 각자 움직이고 있습니다':'동물이 등장하고 있습니다')}
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
 // 동물별 독립 회전/확대: 한 손가락은 선택 동물 회전, 두 손가락은 선택 동물 확대/축소.
 // 배경 드래그는 다른 동물에 영향을 주지 않습니다.
 const raycaster=new THREE.Raycaster(),pointer=new THREE.Vector2();
 const touches=new Map();let selected=null,gesture=null;
+// 먼저 실제 3D 표면을 검사하고, 실패하면 화면상 동물 중심에 대한
+// 확대된 터치 영역으로 보완합니다. 움직이는 스켈레톤 모델도 선택 가능합니다.
 function hitActor(e){
  const rect=renderer.domElement.getBoundingClientRect();
- pointer.set(((e.clientX-rect.left)/rect.width)*2-1,-((e.clientY-rect.top)/rect.height)*2+1);
+ const sx=e.clientX-rect.left,sy=e.clientY-rect.top;
+ pointer.set((sx/rect.width)*2-1,-(sy/rect.height)*2+1);
  raycaster.setFromCamera(pointer,camera);
- const hits=raycaster.intersectObjects(actors.filter(a=>a.group.visible).map(a=>a.group),true);
- for(const hit of hits){let node=hit.object;while(node){const a=actors.find(a=>a.group===node);if(a)return a;node=node.parent}}
- return null;
+ const visible=actors.filter(a=>a.group.visible);
+ const hits=raycaster.intersectObjects(visible.map(a=>a.group),true);
+ for(const hit of hits){let node=hit.object;while(node){const a=visible.find(a=>a.group===node);if(a)return a;node=node.parent;}}
+ // 화면 공간에서 중심과 표시 크기로 터치 허용 범위를 계산합니다.
+ // 원근 투영과 사용자 확대 비율을 함께 고려합니다.
+ let best=null,score=Infinity;
+ for(const a of visible){
+  const center=new THREE.Vector3();a.group.getWorldPosition(center);
+  const ndc=center.project(camera);
+  if(ndc.z>1||ndc.z< -1)continue;
+  const cx=(ndc.x+1)*.5*rect.width,cy=(1-ndc.y)*.5*rect.height;
+  const depth=Math.max(.2,camera.position.distanceTo(a.group.position));
+  const projected=a.baseSize*(a.userScale||1)*a.group.scale.y*rect.height/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*depth);
+  const radius=Math.max(34,Math.min(220,projected*.85));
+  const d=Math.hypot(sx-cx,sy-cy);
+  if(d<radius&&d/radius<score){best=a;score=d/radius;}
+ }
+ return best;
 }
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
 function initGesture(){
@@ -103,7 +121,7 @@ const canvas=$('scene');
 canvas.addEventListener('pointerdown',e=>{
  e.preventDefault();
  touches.set(e.pointerId,{x:e.clientX,y:e.clientY});
- if(touches.size===1){selected=hitActor(e);gesture=null;}
+ if(touches.size===1){selected=hitActor(e);gesture=null;}else if(!selected){selected=hitActor(e);}
  if(selected){initGesture();msg('동물 회전: 한 손가락 · 확대/축소: 두 손가락');}
  else msg('동물을 직접 터치하면 해당 동물만 회전·확대할 수 있습니다');
  canvas.setPointerCapture(e.pointerId);
