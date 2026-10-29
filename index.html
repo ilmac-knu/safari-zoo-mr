@@ -29,7 +29,7 @@ function add(name,{x=0,y=0,z=-2,size=1,heading=0,behavior='idle',delay=0,phase=0
  const pivot=new THREE.Group();const centering=new THREE.Group();centering.position.copy(center).multiplyScalar(-1);centering.add(model);pivot.add(centering);pivot.scale.setScalar(size/max);
  const group=new THREE.Group();group.add(pivot);group.position.set(x,y,z);pivot.rotation.y=heading;scene.add(group);
  let mixer=null;const clips=src.animations||[];if(clips.length){mixer=new THREE.AnimationMixer(model);const preferred=specs[name][1];const clip=clips.find(c=>preferred&&c.name.toLowerCase().includes(preferred.toLowerCase()))||clips[0];const safeTracks=clip.tracks.filter(track=>!/(^|\.)(position|scale)$/.test(track.name));if(safeTracks.length){const safeClip=new THREE.AnimationClip(clip.name+'-safe',clip.duration,safeTracks);mixer.clipAction(safeClip).play()}}
- const a={name,group,pivot,centering,model,mixer,behavior,delay,born:elapsed,origin:{x,y,z},phase,baseSize:size,baseCenter:center.clone(),maxDim:max,desiredSize:size};actors.push(a);return a;
+ const a={name,group,pivot,centering,model,mixer,behavior,delay,born:elapsed,origin:{x,y,z},phase,baseSize:size,baseCenter:center.clone(),maxDim:max,desiredSize:size,offset:new THREE.Vector3()};actors.push(a);return a;
 }
 // 정면에서 측면이 보이도록 모델 방향을 결정: 모델의 장축이 X이면 Y축 회전 0,
 // Z이면 90도 회전. 3D 원본마다 좌표계가 달라 최초 크기 계산 후 설정합니다.
@@ -49,16 +49,16 @@ function home(){
  camera.position.set(0,0,12);camera.rotation.set(0,0,0);drag=0;status('');
  $('subtitle').textContent='7마리 3D 동물을 만나보세요';
  const b=place('bear',.275,.445,.125,{behavior:'homeBear',heading:sideHeading('bear')-.45});
- const r=place('rhino',.405,.585,.15,{behavior:'homeRhino',heading:sideHeading('rhino')+.35});
+ const r=place('rhino',.405,.585,.15*2,{behavior:'homeRhino',heading:sideHeading('rhino')+.35});
  const wr=place('whiteRhino',.58,.55,.13,{heading:sideHeading('whiteRhino')});
- const bird=place('sparrow',.53,.38,.085,{behavior:'homeBird',heading:sideHeading('sparrow')});
+ const bird=place('sparrow',.53,.38,.085*2,{behavior:'homeBird',heading:sideHeading('sparrow')});
  const whale=place('whale',.84,.56,.24,{behavior:'homeWhale',heading:sideHeading('whale')});
- const turtle=place('turtle',.72,.865,.065,{behavior:'homeTurtle',heading:sideHeading('turtle')});
+ const turtle=place('turtle',.72,.865,.065*1.5,{behavior:'homeTurtle',heading:sideHeading('turtle')});
  const rabbit=place('rabbit',.29,.735,.16,{heading:sideHeading('rabbit')});
  // 배치된 모델의 정상적인 형태를 우선 확보합니다. 이동은 아래 animate()에서 처리합니다.
  for(const a of [wr,rabbit])if(a?.mixer){a.mixer.stopAllAction();a.mixer=null;}
  // 나머지 5종은 GLB 원본 애니메이션을 1배속으로 재생합니다.
- for(const a of [b,r,bird,whale,turtle])if(a?.mixer)a.mixer.timeScale=1;
+ for(const a of [b,r,bird,whale,turtle])if(a?.mixer)a.mixer.timeScale=({bear:.5,whale:3,turtle:2}[a.name]??1);
  // 고래는 정면이 아닌 옆모습, 거북이는 등껍질과 머리가 함께 보이도록 기울입니다.
  if(whale)whale.pivot.rotation.y=sideHeading('whale');
  if(turtle){turtle.pivot.rotation.y=sideHeading('turtle')+.3;turtle.pivot.rotation.x=-.18;}
@@ -78,19 +78,51 @@ function show(name){clear();const multiple=name==='all';const spread=innerWidth<
  if(name==='turtle'||multiple)place('turtle',multiple?.67:.5,.68,multiple?.14:.26,{heading:sideHeading('turtle'),behavior:'approach',delay:multiple?2:0});
  }msg(multiple?'동물들이 각자 움직이고 있습니다':'동물이 등장하고 있습니다')}
 function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()}addEventListener('resize',resize);resize();
-$('scene').addEventListener('pointerdown',e=>{dragStart=e.clientX});$('scene').addEventListener('pointermove',e=>{if(dragStart===null)return;drag+=(e.clientX-dragStart)*.002;dragStart=e.clientX});addEventListener('pointerup',()=>dragStart=null);
+// 동물 메시를 직접 터치하면 해당 동물만 이동합니다. 빈 배경을 드래그하면 기존처럼 시점을 돌립니다.
+const raycaster=new THREE.Raycaster(), pointer=new THREE.Vector2();
+let grabbed=null, lastPointer=null;
+function hitActor(e){
+ const rect=renderer.domElement.getBoundingClientRect();
+ pointer.set(((e.clientX-rect.left)/rect.width)*2-1,-((e.clientY-rect.top)/rect.height)*2+1);
+ raycaster.setFromCamera(pointer,camera);
+ const hits=raycaster.intersectObjects(actors.filter(a=>a.group.visible).map(a=>a.group),true);
+ for(const hit of hits){let node=hit.object;while(node){const a=actors.find(a=>a.group===node);if(a)return a;node=node.parent}}
+ return null;
+}
+$('scene').addEventListener('pointerdown',e=>{
+ grabbed=hitActor(e);lastPointer={x:e.clientX,y:e.clientY};dragStart=grabbed?null:e.clientX;
+ $('scene').setPointerCapture(e.pointerId);
+ if(grabbed)msg('선택한 동물만 이동합니다 · 빈 배경을 드래그하면 전체 시점을 돌립니다');
+});
+$('scene').addEventListener('pointermove',e=>{
+ if(!lastPointer)return;
+ if(grabbed){
+  const visibleH=2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*12;
+  const visibleW=visibleH*camera.aspect;
+  grabbed.offset.x+=(e.clientX-lastPointer.x)/renderer.domElement.clientWidth*visibleW;
+  grabbed.offset.y-=(e.clientY-lastPointer.y)/renderer.domElement.clientHeight*visibleH;
+ }else if(dragStart!==null){drag+=(e.clientX-dragStart)*.002;dragStart=e.clientX;}
+ lastPointer={x:e.clientX,y:e.clientY};
+});
+function endPointer(){grabbed=null;lastPointer=null;dragStart=null}
+$('scene').addEventListener('pointerup',endPointer);
+$('scene').addEventListener('pointercancel',endPointer);
+$('scene').addEventListener('lostpointercapture',endPointer);
 function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05);elapsed+=dt;for(const a of actors){if(a.mixer){a.mixer.update(dt);}
  const t=elapsed-a.born-a.delay;a.group.visible=t>=0;if(t<0)continue;const {x,y,z}=a.origin;
  switch(a.behavior){
- case 'homeBear':{const k=(1-Math.cos(t*Math.PI/12))/2;a.group.position.set(x+.12*k,y-.10*k,z);a.group.scale.setScalar(.62+.52*k);break}
+ case 'homeBear':{const k=(1-Math.cos(t*Math.PI/24))/2;a.group.position.set(x+.12*k,y-.10*k,z);a.group.scale.setScalar(.62+.52*k);break}
  case 'homeRhino':{const k=(1-Math.cos(t*Math.PI/15))/2;a.group.position.set(x+.06*k,y-.08*k,z);a.group.scale.setScalar(.72+.34*k);break}
  case 'homeBird':{const k=(1-Math.cos(t*Math.PI/14))/2;a.group.position.set(x+Math.sin(t*.5)*.10,y+Math.sin(t*1.2)*.05,z);a.group.scale.setScalar(.65+.45*k);break}
- case 'homeWhale':a.group.position.y=y+Math.sin(t*.55)*.035;break;
- case 'homeTurtle':a.group.position.x=x+Math.sin(t*.45)*.15; a.group.position.y=y+Math.sin(t*.6)*.025;break;
+ case 'homeWhale':a.group.position.y=y+Math.sin(t*.55*3)*.035;break;
+ case 'homeTurtle':a.group.position.x=x+Math.sin(t*.45*2)*.15; a.group.position.y=y+Math.sin(t*.6*2)*.025;break;
  case 'run':case 'walk':{const speed=a.behavior==='run'?.08:.055;a.group.position.z=z+Math.min(t,7)*speed;a.group.position.y=y+Math.sin(t*3)*.035;if(t>9)a.born=elapsed;break}
  case 'fly':a.group.position.set(x+Math.sin(t*.8)*.22,y+Math.min(t,5)*.035,z);break;
  case 'approach':a.group.position.z=z+Math.min(t,13)*.06;a.group.position.y=y+Math.sin(t*.5)*.08;if(t>17)a.born=elapsed;break;
- }}
+ }
+ if(a.behavior==='idle')a.group.position.set(x,y,z);
+ a.group.position.add(a.offset);
+ }
  // 모델 중심/크기는 최초 로딩 때만 계산합니다. 매 프레임 재계산하면
  // 뼈대 움직임에 따라 모델이 확대·축소되어 깜빡이는 현상이 발생합니다.
  camera.rotation.y=THREE.MathUtils.clamp(drag,-.35,.35);renderer.render(scene,camera)}
